@@ -29,6 +29,16 @@ func (c *client) read() {
 		}
 		msg.When = time.Now()
 		msg.Name = c.userData["name"].(string)
+		// assigned a value to AvatarURL
+		//All we have done here is take the value from the userData field that represents what we
+		//put into the cookie and assigned it to the appropriate field in message if the value was
+		//present in the map
+		//if avatarURL, ok := c.userData["avatar_url"]; ok {
+		//	msg.AvatarURL = avatarURL.(string)
+		//}
+		if avatarUrl, ok := c.userData["avatar_url"]; ok {
+			msg.AvatarURL = avatarUrl.(string)
+		}
 		c.room.forward <- msg
 	}
 }

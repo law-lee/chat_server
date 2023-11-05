@@ -23,6 +23,8 @@ type room struct {
 	// tracer will receive trace information of activity
 	// in the room.
 	tracer trace.Tracer
+	// avatar is how avatar information will be obtained.
+	//avatar Avatar
 }
 
 //We can use select statements whenever we need to synchronize or modify

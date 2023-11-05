@@ -18,6 +18,12 @@ import (
 	"github.com/law-lee/chat_server/trace"
 )
 
+// set the active Avatar implementation
+var avatars Avatar = TryAvatars{
+	UseFileSystemAvatar,
+	UseAuthAvatar,
+	UseGravatar}
+
 // templateHandler represents a single template
 type templateHandler struct {
 	once     sync.Once
@@ -47,6 +53,9 @@ func (t *templateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var addr = flag.String("addr", ":8080", "The addr of the application.")
 	flag.Parse() // parse the flags
+	// replace your own google client auth
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSec := os.Getenv("GOOGLE_CLIENT_SEC")
 	// setup gomniauth
 	gomniauth.SetSecurityKey("AIzaSyA1p5cwIbIOk1Dnn9IrRRdTGjxwaqvw")
 	gomniauth.WithProviders(
@@ -54,15 +63,40 @@ func main() {
 			"http://localhost:8080/auth/callback/facebook"),
 		github.New("key", "secret",
 			"http://localhost:8080/auth/callback/github"),
-		google.New("633518294201-gfqq7psvembbc0ev15c4u73bh852hbnk.apps.googleusercontent.com", "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",
-			"http://localhost:8080/auth/callback/google"),
+		google.New(clientID, clientSec, "http://localhost:8080/auth/callback/google"),
 	)
+	// options UseAuthAvatar/UseGravatarAvatar/UseFileSystemAvatar
 	r := newRoom()
 	r.tracer = trace.New(os.Stdout)
 	http.Handle("/chat", MustAuth(&templateHandler{filename: "chat.html"}))
 	http.Handle("/login", &templateHandler{filename: "login.html"})
 	http.HandleFunc("/auth/", loginHandler)
 	http.Handle("/room", r)
+	//If we build and run our application having logged in with a previous version, you will find
+	//that the auth cookie that doesn't contain the avatar URL is still there. We are not asked to
+	//authenticate again (since we are already logged in), and the code that adds the avatar_url
+	//field never gets a chance to run. We could delete our cookie and refresh the page, but we
+	//would have to keep doing this whenever we make changes during development. Let's solve
+	//this problem properly by adding a logout feature
+	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:   "auth",
+			Value:  "",
+			Path:   "/",
+			MaxAge: -1,
+		})
+		w.Header().Set("Location", "/chat")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	})
+	http.Handle("/upload", &templateHandler{filename: "upload.html"})
+	http.HandleFunc("/uploader", uploaderHandler)
+	//If we didn't strip the /avatars/ prefix from the requests with
+	//http.StripPrefix, the file server would look for another folder called
+	//avatars inside the actual avatars folder, that is,
+	///avatars/avatars/filename instead of /avatars/filename.
+	http.Handle("/avatars/",
+		http.StripPrefix("/avatars/",
+			http.FileServer(http.Dir("./avatars"))))
 	// get the room going
 	go r.run()
 	// start the web server

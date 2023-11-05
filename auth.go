@@ -1,14 +1,48 @@
 package main
 
 import (
+	"crypto/md5"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/stretchr/gomniauth"
+	gomniauthcommon "github.com/stretchr/gomniauth/common"
 	"github.com/stretchr/objx"
 )
+
+//We have concluded that our GetAvatarURL method depends on a type that is not available
+//to us at the point we need it, so what would be a good alternative? We could pass each
+//required field as a separate argument, but this would make our interface brittle, since as
+//soon as an Avatar implementation needs a new piece of information, we'd have to change
+//the method signature. Instead, we will create a new type that will encapsulate the
+//information our Avatar implementations need while conceptually remaining decoupled
+//from our specific case.
+type ChatUser interface {
+	UniqueID() string
+	AvatarURL() string
+}
+
+//makes use of a very interesting feature in Go: type embedding. We actually embedded the
+//gomniauth/common.User interface type, which means that our struct interface
+//implements the interface automatically.
+type chatUser struct {
+	gomniauthcommon.User
+	uniqueID string
+}
+
+//UniqueID You may have noticed that we only actually implemented one of the two required methods
+//to satisfy our ChatUser interface. We got away with this because the Gomniauth User
+//interface happens to define the same AvatarURL method. In practice, when we instantiate
+//our chatUser struct provided we set an appropriate value for the implied Gomniauth User
+//field our object implements both Gomniauth's User interface and our own ChatUser
+//interface at the same time.
+func (u chatUser) UniqueID() string {
+	return u.uniqueID
+}
 
 //OAuth2 is an open authorization standard designed to allow resource owners to give clients
 //delegated access to private data (such as wall posts or tweets) via an access token exchange
@@ -87,7 +121,26 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		//Base64-encoding data ensures it won't contain any special or
 		//unpredictable characters, which is useful for situations such as passing
 		//data to a URL or storing it in a cookie.
-		authCookieValue := objx.New(map[string]interface{}{"name": user.Name()}).MustBase64()
+		//authCookieValue := objx.New(map[string]interface{}{
+		//	"name": user.Name(),
+		//	//make use of the avatar URL field
+		//	"avatar_url": user.AvatarURL(),
+		//	"email":      user.Email(),
+		//}).MustBase64()
+		chatUser := &chatUser{User: user}
+		m := md5.New()
+		io.WriteString(m, strings.ToLower(user.Email()))
+		chatUser.uniqueID = fmt.Sprintf("%x", m.Sum(nil))
+		avatarURL, err := avatars.GetAvatarURL(chatUser)
+		if err != nil {
+			log.Fatalln("Error when trying to GetAvatarURL", "-", err)
+		}
+		authCookieValue := objx.New(map[string]interface{}{
+			"userid":     chatUser.uniqueID,
+			"name":       user.Name(),
+			"avatar_url": avatarURL,
+			"email":      user.Email(),
+		}).MustBase64()
 		http.SetCookie(w, &http.Cookie{
 			Name:  "auth",
 			Value: authCookieValue,
